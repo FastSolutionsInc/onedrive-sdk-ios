@@ -23,17 +23,18 @@
 #import "ODAuthenticationViewController.h"
 #import "ODAuthHelper.h"
 #import "ODAuthConstants.h"
+#import <WebKit/WebKit.h>
 
 #define kRequestTimeoutDefault  60
 
-@interface ODAuthenticationViewController() <UIWebViewDelegate>
+@interface ODAuthenticationViewController() <WKNavigationDelegate>
 
-@property UIWebView *webView;
+@property WKWebView *webView;
 
 @property NSURLRequest *initialRequest;
 @property (strong, nonatomic) ODEndURLCompletion successCompletion;
 @property (strong, nonatomic) NSURL *endURL;
-
+@property (strong, nonatomic) WKNavigation *latestUsedNavigation;
 @property (strong, nonatomic) NSTimer *timer;
 @property (nonatomic) BOOL isComplete;
 
@@ -89,10 +90,9 @@
 
 - (void)loadView
 {
-    self.webView = [[UIWebView alloc] init];
-    [self.webView setScalesPageToFit:YES];
+    self.webView = [[WKWebView alloc] init];
     self.webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.webView.delegate = self;
+    self.webView.navigationDelegate = self;
     self.view = self.webView;
     UIBarButtonItem *cancel = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
                                                                                 target:self
@@ -110,39 +110,37 @@
 - (void)viewWillDisappear:(BOOL)animated
 {
     [self.webView stopLoading];
-    self.webView.delegate = nil;
+    self.webView.navigationDelegate = nil;
     [super viewWillDisappear:animated];
 }
 
-#pragma mark - UIWebViewDelegate
+#pragma mark - WKNavigationDelegate
 
-- (void)webViewDidStartLoad:(UIWebView *)webView
-{
+- (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(null_unspecified WKNavigation *)navigation {
     [self.timer invalidate];
+    self.latestUsedNavigation = navigation;
     self.timer = [NSTimer scheduledTimerWithTimeInterval:self.requestTimeout target:self selector:@selector(failWithTimeout) userInfo:nil repeats:NO];
 }
 
-- (void)webViewDidFinishLoad:(UIWebView *)webView
-{
+- (void)webView:(WKWebView *)webView didFinishNavigation:(null_unspecified WKNavigation *)navigation {
     [self.timer invalidate];
     self.timer = nil;
 }
 
-- (BOOL)webView:(UIWebView *)webView shouldStartLoadWithRequest:(NSURLRequest *)request navigationType:(UIWebViewNavigationType)navigationType
-{
-    if ([[[request.URL absoluteString] lowercaseString] hasPrefix:[[self.endURL absoluteString] lowercaseString]]){
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+    if ([[[navigationAction.request.URL absoluteString] lowercaseString] hasPrefix:[[self.endURL absoluteString] lowercaseString]]){
         self.isComplete = YES;
         [self.timer invalidate];
         self.timer = nil;
         
-        self.successCompletion(request.URL, nil);
-        return NO;
+        self.successCompletion(navigationAction.request.URL, nil);
+        decisionHandler(WKNavigationActionPolicyCancel);
+        return;
     }
-    return YES;
+    decisionHandler(WKNavigationActionPolicyAllow);
 }
 
-- (void)webView:(UIWebView *)webView didFailLoadWithError:(NSError *)error
-{
+- (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(null_unspecified WKNavigation *)navigation withError:(NSError *)error {
     [self.timer invalidate];
     self.timer = nil;
     
@@ -171,9 +169,8 @@
 
 - (void)failWithTimeout
 {
-    [self webView:self.webView didFailLoadWithError:[NSError errorWithDomain:NSURLErrorDomain
-                                                                    code:NSURLErrorTimedOut
-                                                                userInfo:nil]];
+    NSError *error = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorTimedOut userInfo:nil];
+    [self webView:self.webView didFailProvisionalNavigation:self.latestUsedNavigation withError:error];
 }
 
 @end
